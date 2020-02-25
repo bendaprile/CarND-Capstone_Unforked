@@ -3,6 +3,7 @@
 import rospy
 from geometry_msgs.msg import PoseStamped
 from styx_msgs.msg import Lane, Waypoint
+from std_msgs.msg import Int32
 from scipy.spatial import KDTree
 
 import math
@@ -23,7 +24,8 @@ as well as to verify your TL classifier.
 TODO (for Yousuf and Aaron): Stopline location for each traffic light.
 '''
 
-LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
+# 10 Seems necessary to get workspace simulator to work properly
+LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
 
 
 class WaypointUpdater(object):
@@ -38,6 +40,8 @@ class WaypointUpdater(object):
 
         # TODO: Add other member variables you need below
         self.pose = None
+        self.base_lane = None
+        self.stopline_wp_idx = None
         self.base_waypoints = None
         self.waypoints_2d = None
         self.waypoint_tree = None
@@ -45,12 +49,13 @@ class WaypointUpdater(object):
         self.loop()
 
     def loop(self):
-        rate = rospy.Rate(10)
+        rate = rospy.Rate(LOOKAHEAD_WPS)
         while not rospy.is_shutdown():
-            if self.pose and self.base_waypoints:
+            if self.pose and self.base_lane and self.stopline_wp_idx:
                 # Get closest waypoint
                 closest_waypoint_idx = self.get_closest_waypoint_idx()
-                self.publish_waypoints(closest_waypoint_idx)
+                #rospy.logwarn("Publishing Waypoints")
+                self.publish_waypoints()
             rate.sleep()
             
     def get_closest_waypoint_idx(self):
@@ -60,7 +65,7 @@ class WaypointUpdater(object):
 
         # Check if closest is ahead or behind vehicle
         closest_coord = self.waypoints_2d[closest_idx]
-        prev_coord = self.waypoints_2d[closest_idx-1]
+        prev_coord = self.waypoints_2d[closest_idx - 1]
         
         # Equation for hyperplane through closest_coords
         cl_vect = np.array(closest_coord)
@@ -73,7 +78,7 @@ class WaypointUpdater(object):
             closest_idx = (closest_idx + 1) % len(self.waypoints_2d)
         return closest_idx
             
-    def publish_waypoints(self, closest_idx):
+    def publish_waypoints(self):
         final_lane = self.generate_lane()
         self.final_waypoints_pub.publish(final_lane)
         
@@ -86,17 +91,16 @@ class WaypointUpdater(object):
         
         #If no detected traffic light, continue as expected
         if self.stopline_wp_idx == -1 or (self.stopline_wp_idx >= farthest_idx):
-            lane_waypoints = base_waypoints
+            lane.waypoints = base_waypoints
         #Else traffic light is closing in and we decelerate
         else:
-            lane_waypoints = self.decelerate_waypoints(base_waypoints, closest_idx)
+            lane.waypoints = self.decelerate_waypoints(base_waypoints, closest_idx)
             
         return lane
         
     def decelerate_waypoints(self, waypoints, closest_idx):
         temp = []
         for i, wp in enumerate(waypoints):
-            
             p = Waypoint()
             p.pose = wp.pose
             
@@ -118,7 +122,7 @@ class WaypointUpdater(object):
         self.pose = msg
 
     def waypoints_cb(self, waypoints):
-        self.base_waypoints = waypoints
+        self.base_lane = waypoints
         if not self.waypoints_2d:
             self.waypoints_2d = [[waypoint.pose.pose.position.x, waypoint.pose.pose.position.y] for waypoint in waypoints.waypoints]
             self.waypoint_tree = KDTree(self.waypoints_2d)
